@@ -24,11 +24,12 @@ class Threat(models.Model):
         ('Critical', 'Critical')
     ], blank=False)
     attack_Name = models.CharField(max_length=50) # DOS
-    description = models.CharField(max_length=700, blank=True, null=True) 
+    CVE_ID = models.CharField(max_length=50, blank=True, null=True)
+    description = models.CharField(max_length=1000, blank=True, null=True) 
     devices = models.ManyToManyField('Iot_Device', related_name='threats')
 
     def __str__(self):
-        return  self.attack_Name  + ": "  + self.threat_Level
+        return  self.attack_Name  + "; " + str(self.CVE_ID) + ": "  + self.threat_Level
     
 class Threat_Detail(models.Model):
     Threat = models.ForeignKey('Threat', on_delete=models.CASCADE, related_name='threat_details') 
