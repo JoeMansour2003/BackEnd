@@ -227,6 +227,63 @@ def search_vulnerabilities_for_device(device_id):
             threat.devices.add(device)
             
             print(f"{'Created' if created else 'Updated'} threat: {cve_id} ({friendly_attack_name}) with level {threat_level}")
+            
+            # Generate threat details for each category
+            from .models import Threat_Info_Category, Threat_Detail
+            
+            categories = Threat_Info_Category.objects.all()
+            for category in categories:
+                # Check if we already have a threat detail for this threat and category
+                existing_detail = Threat_Detail.objects.filter(
+                    Threat=threat,
+                    threat_Info_Category=category
+                ).first()
+                
+                if not existing_detail:
+                    # Generate the threat detail content
+                    details = generate_threat_detail(threat, device, category)
+                    
+                    # Create the threat detail
+                    threat_detail = Threat_Detail.objects.create(
+                        Threat=threat,
+                        threat_Info_Category=category,
+                        # ai_summary= ai_summary,
+                        details=details
+                    )
+                    
+                    print(f"Created threat detail for {threat.CVE_ID}: {category.topic}")
                 
     except Exception as e:
         print(f"Error searching vulnerabilities: {str(e)}")
+
+def generate_threat_detail(threat, device, category):
+    """
+    Generate threat detail content based on the threat, device, and category topic
+    
+    Args:
+        threat: The Threat object
+        device: The Iot_Device object
+        category: The Threat_Info_Category object
+
+    Returns:
+        tuple: (ai_summary, details)
+    """
+    from .models import Threat_Info_Category
+    
+    # Build a prompt based on the category
+    prompt = f"""Based on the following vulnerability information, identify {category.description}:
+        CVE ID: {threat.CVE_ID if threat.CVE_ID else "Unknown"}
+    Attack Name: {threat.attack_Name}
+    Device: {device.name} ({device.description})
+    Threat Level: {threat.threat_Level}
+    Description: {threat.description}
+
+    {category.prompt}
+    """
+    # Call LLaMA API to generate the content
+    try:
+        response = call_llama_api(prompt) 
+        return response
+    except Exception as e:
+        print(f"Error generating threat detail: {str(e)}")
+        return f"Error generating {category.topic} details", f"Failed to generate {category.topic} details: {str(e)}"

@@ -43,6 +43,7 @@ class Threat_Detail(models.Model):
 class Threat_Info_Category(models.Model):
     topic = models.CharField(max_length=50, unique=True) #known threats actors
     description = models.CharField(max_length=350, null=True , blank=True) # a list of known threat actors
+    prompt = models.TextField(blank=True, null=True) # a prompt to use with the AI to generate the details of the threat actor
 
     def __str__(self):
         return self.topic
