@@ -5,13 +5,14 @@ import requests
 import re
 import json
 
+
 def get_friendly_attack_name(cve_data):
     """
     Use LLaMA 3 to generate a friendly name for a CVE based on its description and CWE info
-    
+
     Args:
         cve_data: The CVE data dictionary from NVD API
-        
+
     Returns:
         str: A friendly name for the attack
     """
@@ -22,11 +23,12 @@ def get_friendly_attack_name(cve_data):
         for desc in weakness.get('description', []):
             if desc.get('lang') == 'en' and desc.get('value', '').startswith('CWE-'):
                 cwe_descriptions.append(desc.get('value'))
-    
+
     # Extract English description
     descriptions = cve_data.get('descriptions', [])
-    description = next((d.get('value', '') for d in descriptions if d.get('lang') == 'en'), '')
-    
+    description = next((d.get('value', '')
+                       for d in descriptions if d.get('lang') == 'en'), '')
+
     # Create a prompt for LLaMA 3
     prompt = f"""Based on the following CVE information, provide a short (1-3 words), human-friendly attack type name:
 
@@ -48,14 +50,15 @@ Respond with ONLY the attack type name like: Overflow, Memory, Corruption, Sql I
         print(f"LLaMA API error: {str(e)}, falling back to pattern matching")
         return extract_attack_pattern(cwe_descriptions, description)
 
+
 def call_llama_api(prompt):
     """
     Call LLaMA 3 API
     """
-    
+
     # Example for a local LLaMA API endpoint
-    api_url = "http://localhost:11434/api/chat"  # Replace with your actual endpoint
-    
+    api_url = "http://localhost:11434/api/chat"
+
     try:
         data = {
             "model": "llama3",
@@ -72,7 +75,7 @@ def call_llama_api(prompt):
         }
 
         response = requests.post(api_url, headers=headers, json=data)
-        
+
         if response.status_code == 200:
             return response.json()["message"]["content"]
         else:
@@ -80,11 +83,13 @@ def call_llama_api(prompt):
     except Exception as e:
         return f"Error calling LLaMA API: {str(e)}"
 
+
 def clean_attack_name(raw_response):
     """Clean up the LLaMA response to get a concise attack name"""
     # Remove any extra text, quotes, etc.
     cleaned = raw_response.strip().strip('"\'').strip()
     return cleaned
+
 
 def extract_attack_pattern(cwe_descriptions, description):
     """Fallback method to extract attack pattern from CWE and description"""
@@ -123,24 +128,25 @@ def extract_attack_pattern(cwe_descriptions, description):
         # Information leak
         r'(?i)information\s*leak|(?i)information\s*disclosure|(?i)data\s*leak': 'Information Leak'
     }
-    
+
     # Check CWE descriptions first
     for cwe in cwe_descriptions:
         for pattern, name in patterns.items():
             if re.search(pattern, cwe):
                 return name
-    
+
     # Then check the main description
     for pattern, name in patterns.items():
         if re.search(pattern, description):
             return name
-    
+
     # Get CWE number as fallback
     cwe_match = re.search(r'CWE-(\d+)', ' '.join(cwe_descriptions))
     if cwe_match:
         return f"CWE-{cwe_match.group(1)}"
-        
+
     return "Security Vulnerability"
+
 
 def get_threat_level_from_cvss(score):
     """Map CVSS score to threat level"""
@@ -155,6 +161,7 @@ def get_threat_level_from_cvss(score):
     else:
         return "Low"
 
+
 def search_vulnerabilities_for_device(device_id):
     """
     Search for vulnerabilities for a given device and create Threat objects
@@ -162,34 +169,42 @@ def search_vulnerabilities_for_device(device_id):
     try:
         # Get the device
         device = Iot_Device.objects.get(id=device_id)
-        
+
         # Encode the device name for URL
         encoded_name = urllib.parse.quote(device.name)
-        
+
         # Query the NVD API
         api_url = f"https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch={encoded_name}"
         response = requests.get(api_url)
-        
+
         if response.status_code != 200:
             print(f"Error fetching vulnerabilities: {response.status_code}")
             return
-        
+
         data = response.json()
+        total_results = data.get('totalResults', 0)
         vulnerabilities = data.get('vulnerabilities', [])
-        
+
+        # Limit to 50 vulnerabilities if there are more
+        if total_results > 50:
+            print(
+                f"Found {total_results} vulnerabilities for {device.name}, limiting to 50 to avoid overload.")
+            vulnerabilities = vulnerabilities[:50]
+
         # Create threats for each vulnerability
         for vuln in vulnerabilities:
             cve_data = vuln.get('cve', {})
             cve_id = cve_data.get('id', 'Unknown CVE')
-            
+
             # Get description
             descriptions = cve_data.get('descriptions', [])
-            description = next((d.get('value', '') for d in descriptions if d.get('lang') == 'en'), 'No description available')
-            
+            description = next((d.get('value', '') for d in descriptions if d.get(
+                'lang') == 'en'), 'No description available')
+
             # Get CVSS score for threat level determination
             metrics = cve_data.get('metrics', {})
             cvss_score = None
-            
+
             # Try to get CVSS v3.1 score first, then v3.0, then v2.0
             if 'cvssMetricV31' in metrics:
                 cvss_data = metrics['cvssMetricV31'][0].get('cvssData', {})
@@ -200,37 +215,39 @@ def search_vulnerabilities_for_device(device_id):
             elif 'cvssMetricV2' in metrics:
                 cvss_data = metrics['cvssMetricV2'][0].get('cvssData', {})
                 cvss_score = cvss_data.get('baseScore')
-            
+
             threat_level = get_threat_level_from_cvss(cvss_score)
-            
+
             # Get friendly attack name - try LLaMA first, then pattern matching
             try:
                 friendly_attack_name = get_friendly_attack_name(cve_data)
             except Exception:
                 friendly_attack_name = extract_attack_pattern(
-                    [d.get('value', '') for weakness in cve_data.get('weaknesses', []) 
+                    [d.get('value', '') for weakness in cve_data.get('weaknesses', [])
                      for d in weakness.get('description', []) if d.get('lang') == 'en'],
                     description
                 )
-            
+
             # Save CVE ID separately
             threat, created = Threat.objects.get_or_create(
                 CVE_ID=cve_id,
                 defaults={
                     'attack_Name': friendly_attack_name,
                     'threat_Level': threat_level,
-                    'description': description[:700] if description else None  # Truncate if needed
+                    # Truncate if needed
+                    'description': description[:700] if description else None
                 }
             )
-            
+
             # Link to the device
             threat.devices.add(device)
-            
-            print(f"{'Created' if created else 'Updated'} threat: {cve_id} ({friendly_attack_name}) with level {threat_level}")
-            
+
+            print(
+                f"{'Created' if created else 'Updated'} threat: {cve_id} ({friendly_attack_name}) with level {threat_level}")
+
             # Generate threat details for each category
             from .models import Threat_Info_Category, Threat_Detail
-            
+
             categories = Threat_Info_Category.objects.all()
             for category in categories:
                 # Check if we already have a threat detail for this threat and category
@@ -238,11 +255,11 @@ def search_vulnerabilities_for_device(device_id):
                     Threat=threat,
                     threat_Info_Category=category
                 ).first()
-                
+
                 if not existing_detail:
                     # Generate the threat detail content
                     details = generate_threat_detail(threat, device, category)
-                    
+
                     # Create the threat detail
                     threat_detail = Threat_Detail.objects.create(
                         Threat=threat,
@@ -250,16 +267,18 @@ def search_vulnerabilities_for_device(device_id):
                         # ai_summary= ai_summary,
                         details=details
                     )
-                    
-                    print(f"Created threat detail for {threat.CVE_ID}: {category.topic}")
-                
+
+                    print(
+                        f"Created threat detail for {threat.CVE_ID}: {category.topic}")
+
     except Exception as e:
         print(f"Error searching vulnerabilities: {str(e)}")
+
 
 def generate_threat_detail(threat, device, category):
     """
     Generate threat detail content based on the threat, device, and category topic
-    
+
     Args:
         threat: The Threat object
         device: The Iot_Device object
@@ -269,7 +288,7 @@ def generate_threat_detail(threat, device, category):
         tuple: (ai_summary, details)
     """
     from .models import Threat_Info_Category
-    
+
     # Build a prompt based on the category
     prompt = f"""Based on the following vulnerability information, identify {category.description}:
         CVE ID: {threat.CVE_ID if threat.CVE_ID else "Unknown"}
@@ -282,7 +301,7 @@ def generate_threat_detail(threat, device, category):
     """
     # Call LLaMA API to generate the content
     try:
-        response = call_llama_api(prompt) 
+        response = call_llama_api(prompt)
         return response
     except Exception as e:
         print(f"Error generating threat detail: {str(e)}")
